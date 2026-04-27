@@ -70,28 +70,38 @@
 
 ---
 
-## 资源文件夹规范
-游戏资源按以下结构存放，自动识别加载：
-```text
-项目根目录/
-├─ 企划文件夹1/
-│  ├─ 001-声优A/
-│  │  └─ 图片1.jpg/图片2.png...
-│  └─ 002-声优B/
-│     └─ 图片文件...
-├─ 企划文件夹2/
-│  └─ ...
-├─ main.py              # 游戏主程序
-├─ num_nsy.py           # 图鉴导出脚本
-└─ shuffle_num_nsy.py    # 批量重命名脚本
-```
-
-
----
 
 ## 使用说明
 1. 按规范准备声优图片文件夹
-2. 运行`main.py`启动游戏
+
+  （assets.example为示例文件，命名为assets可以直接运行，里面只有少量文件，整理好的nsy图片合集请从这里下载：https://pan.baidu.com/s/1-lbgg6EALeRaaGOsgU3Irw?pwd=3724）
+
+  游戏资源按以下结构存放，自动识别加载：
+
+  ```text
+  RandomNsyGame/
+  └─ assets/
+     ├─ 企划文件夹1/
+     │  ├─ 001-声优A/
+     │  │  ├─ 图片1.jpg
+     │  │  └─ 图片2.png
+     │  └─ 002-声优B/
+     │     └─ 图片文件...
+     └─ 企划文件夹2/
+        └─ ...
+  ```
+
+  支持的图片格式包括 `.jpg`、`.jpeg`、`.png`、`.gif`、`.webp`、`.avif`。
+
+  
+
+2. 配置环境并启动
+```bash
+python -m venv .venv #创建虚拟环境
+source .venv/bin/activate #激活虚拟环境（仅供参考，具体请结合你的操作系统和shell类型）
+pip install -r requirements.txt #安装依赖
+python main.py #启动！
+```
 3. 可选：用重命名工具规范目录、用导出工具生成图鉴
 4. 选择企划、开启模式，开始趣味答题
 
