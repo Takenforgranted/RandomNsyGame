@@ -45,8 +45,8 @@ if __name__ == "__main__":
     wb = Workbook()
     wb.remove(wb.active)
 
-    for item in os.listdir("."):
-        if not os.path.isdir(item) or item.startswith("."):
+    for item in os.listdir("./assets"):
+        if not os.path.isdir(os.path.join("./assets", item)) or item.startswith("."):
             continue
 
         project_name = item
@@ -62,8 +62,8 @@ if __name__ == "__main__":
 
         # 收集声优文件夹
         seiyu_dirs = []
-        for subfolder in os.listdir(project_name):
-            sf_path = os.path.join(project_name, subfolder)
+        for subfolder in os.listdir(os.path.join("./assets", project_name)):
+            sf_path = os.path.join("./assets", project_name, subfolder)
             if os.path.isdir(sf_path) and '-' in subfolder:
                 seiyu_dirs.append((subfolder, sf_path))
 

@@ -1,7 +1,7 @@
 import os
 
 # ===================== 【重要！在这里设置你要整理的文件夹路径】 =====================
-TARGET_FOLDER = r"E:\wcy\Everybody！Play！\RandomSeiyu\跨企划大牌"  # 改成你要批量编号的文件夹
+TARGET_FOLDER = r"/Users/nagisa/developer/RandomNsyGame/assets/lovelive"  # 改成你要批量编号的文件夹
 
 
 # =====================================================================================
