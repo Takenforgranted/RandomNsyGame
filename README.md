@@ -74,7 +74,7 @@
 ## 使用说明
 1. 按规范准备声优图片文件夹
 
-  （总文件夹命名为assets可以直接运行，里面只有少量文件，整理好的nsy图片合集请从这里下载：https://pan.baidu.com/s/1-lbgg6EALeRaaGOsgU3Irw?pwd=3724）
+  （总文件夹命名为assets可以直接运行，里面只有少量文件，目前已经整理好的nsy图片合集请从这里下载：[jyajya](https://pan.baidu.com/s/1-lbgg6EALeRaaGOsgU3Irw?pwd=3724)）
 
   游戏资源按以下结构存放，自动识别加载：
 
