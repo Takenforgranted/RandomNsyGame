@@ -1,0 +1,3 @@
+# 网页版依赖（原桌面版 requirements.txt 保持不变）
+Flask>=3.0
+pillow==12.2.0

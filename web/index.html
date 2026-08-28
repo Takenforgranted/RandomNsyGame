@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>趣味猜女声优器</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <!-- ============ 企划选择页 ============ -->
+  <div id="selectPage" class="page">
+    <div class="select-card">
+      <h1 class="game-title">🎤 趣味猜女声优器</h1>
+      <p class="subtitle">选择企划（可多选）</p>
+      <div id="projectList" class="project-list"></div>
+      <p id="emptyHint" class="empty-hint hidden">未检测到任何企划文件夹！请创建 bangdream 等文件夹</p>
+      <div class="xd-row">
+        <label class="xd-toggle">
+          <input type="checkbox" id="xdMode">
+          <span>开启 XD 模式（正确率低于50%得分归零）</span>
+        </label>
+      </div>
+      <div>
+        <button id="startBtn" class="btn-primary" type="button">开始游戏</button>
+      </div>
+      <p id="selectError" class="error-msg hidden"></p>
+    </div>
+  </div>
+
+  <!-- ============ 答题页 ============ -->
+  <div id="quizPage" class="page hidden">
+    <div class="top-bar">
+      <span id="timerLabel" class="timer">用时：0 秒</span>
+    </div>
+    <div class="quiz-header">
+      <span id="questionNumber" class="q-number">第 1/12 题</span>
+      <span id="scoreLabel" class="score">当前分数：0</span>
+    </div>
+    <div id="promptArea" class="prompt-area"></div>
+    <div id="choicesArea" class="choices-area"></div>
+    <p class="key-hint">提示：可按键盘 1 / 2 / 3 / 4 快速作答</p>
+  </div>
+
+  <!-- ============ 弹窗（答题反馈 / 结算） ============ -->
+  <div id="modal" class="modal hidden">
+    <div class="modal-content">
+      <h2 id="modalTitle" class="modal-title"></h2>
+      <pre id="modalMessage" class="modal-message"></pre>
+      <button id="modalOk" class="btn-primary" type="button">确定</button>
+    </div>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
