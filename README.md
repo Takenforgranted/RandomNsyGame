@@ -133,9 +133,14 @@ requirements-web.txt    # 网页版依赖
 
 ### 运行网页版
 ```bash
-pip install -r requirements-web.txt   # 安装 Flask 等网页版依赖
+pip install -r requirements-web.txt   # 安装 Flask、waitress 等网页版依赖
 python web_app.py                     # 启动！浏览器会自动打开 http://127.0.0.1:5000
 ```
+- 服务器统一使用 **waitress**（纯 Python 多线程 WSGI 服务器），支持多人同时在线游玩，不会出现并发卡死 / 400。
+- 统一监听 `0.0.0.0:5000`：本机、局域网、服务器均可直接访问，无需额外设置环境变量。
+  ```bash
+  python web_app.py
+  ```
 Windows 用户也可直接双击 `启动网页版.bat` 一键启动。
 
 > 提示：桌面版（`python main.py`）与网页版互不影响，可同时保留、按需运行。

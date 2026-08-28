@@ -8,7 +8,7 @@
   - 正确答案声优绝不重复、自动校验图片、实时计时
   - XD 模式：正确率低于 50% 时最终得分归零
 
-运行方式：python web_app.py   （浏览器会自动打开 http://127.0.0.1:5000）
+运行方式：python web_app.py   （浏览器会自动打开 http://127.0.0.1:5000；使用 waitress 多线程 WSGI 服务器）
 """
 import base64
 import os
@@ -517,23 +517,22 @@ def main():
     if not load_all_projects():
         print("⚠️  未检测到 assets 企划文件夹！请确保 assets 目录存在并包含企划文件夹。")
 
-    # 生产部署：PRODUCTION=1 时用 waitress（真正的生产 WSGI 服务器，多线程并发，可对外访问）
-    if os.environ.get("PRODUCTION") == "1":
-        try:
-            from waitress import serve
-        except ImportError:
-            print("⚠️  生产模式需要 waitress，请先安装：pip install waitress")
-            print("   回退到 Flask 开发服务器（仅用于测试，不推荐生产使用）。")
-            app.run(host="0.0.0.0", port=5000, debug=False)
-            return
-        print("🚀  生产模式（waitress）：监听 0.0.0.0:5000")
-        serve(app, host="0.0.0.0", port=5000, threads=8)
+    try:
+        from waitress import serve
+    except ImportError:
+        print("⚠️  需要 waitress（纯 Python WSGI 服务器），请先安装：pip install waitress")
+        print("   安装完成后重新运行：python web_app.py")
         return
 
-    # 本地开发：自动打开浏览器
+    # 统一使用 waitress 多线程 WSGI 服务器（替代 Flask 开发服务器）：
+    # 多线程并发，解决多人同时游玩时的卡死 / 400 / 相互影响问题。
+    # 统一监听 0.0.0.0：本机、局域网、服务器均可直接访问。
+    host = "0.0.0.0"
+    # 本地使用：自动打开浏览器
     threading.Timer(1.0, lambda: webbrowser.open("http://127.0.0.1:5000")).start()
-    print("🎤  趣味猜女声优器（网页版）已启动： http://127.0.0.1:5000")
-    app.run(host="127.0.0.1", port=5000, debug=False)
+
+    print("🚀  趣味猜女声优器（网页版）已启动（waitress）： http://127.0.0.1:5000")
+    serve(app, host=host, port=5000, threads=8)
 
 
 if __name__ == "__main__":
