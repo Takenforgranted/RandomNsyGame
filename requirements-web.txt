@@ -1,3 +1,5 @@
 # 网页版依赖（原桌面版 requirements.txt 保持不变）
 Flask>=3.0
 pillow==12.2.0
+# 生产部署：真正的 WSGI 服务器（多线程并发，解决多人同时玩卡死/400）
+waitress>=3.0.0
