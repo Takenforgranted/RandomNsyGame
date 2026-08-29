@@ -71,8 +71,7 @@
 ---
 
 
-## 使用说明
-1. 按规范准备声优图片文件夹
+## 开始：按规范准备声优图片文件夹
 
   （总文件夹命名为assets可以直接运行，里面只有少量文件，目前已经整理好的nsy图片合集请从这里下载：[jyajya](https://pan.baidu.com/s/1-lbgg6EALeRaaGOsgU3Irw?pwd=3724)）
 
@@ -93,25 +92,25 @@
 
   支持的图片格式包括 `.jpg`、`.jpeg`、`.png`、`.gif`、`.webp`、`.avif`。
 
-  
 
-2. 配置环境并启动
+## 使用说明
+
+1. 配置环境并启动
 ```bash
 python -m venv .venv #创建虚拟环境
 source .venv/bin/activate #激活虚拟环境（仅供参考，具体请结合你的操作系统和shell类型）
 pip install -r requirements.txt #安装依赖
 python main.py #启动！
 ```
-3. 可选：用重命名工具规范目录、用导出工具生成图鉴
-4. 选择企划、开启模式，开始趣味答题
+2. 可选：用重命名工具规范目录、用导出工具生成图鉴
+3. 选择企划、开启模式，开始趣味答题
 
 ---
 
-## 网页版（本地运行的网页游戏）
+## 网页版
 
 在保留原版桌面程序（`main.py`，Tkinter）全部玩法与逻辑的基础上，额外提供一套**本地网页版**：
-Flask 后端 + 原生 HTML/CSS/JS 前端，无需联网，浏览器打开即玩。
-
+Flask 后端 + 原生 HTML/CSS/JS 前端
 ### 与桌面版完全一致的功能
 - 多企划多选、XD 模式（正确率低于 50% 得分归零）
 - 共 12 题、每题 10 分、满分 120 分
@@ -129,6 +128,7 @@ web/
   └─ app.js             # 前端逻辑（渲染、计时、键盘、交互）
 requirements-web.txt    # 网页版依赖
 启动网页版.bat           # Windows 一键启动脚本
+start.sh                #Linux/macOS一键启动脚本
 ```
 
 ### 运行网页版
@@ -142,6 +142,7 @@ python web_app.py                     # 启动！浏览器会自动打开 http:/
   python web_app.py
   ```
 Windows 用户也可直接双击 `启动网页版.bat` 一键启动。
+Linux/macOS用户可以使用`bash start.sh`一键启动（激活虚拟环境+启动服务器）
 
 > 提示：桌面版（`python main.py`）与网页版互不影响，可同时保留、按需运行。
 
