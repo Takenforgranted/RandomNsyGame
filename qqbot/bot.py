@@ -13,6 +13,16 @@
     12 题结束                -> 结算分数与用时
 
 运行： python bot.py
+
+并发模型（多群 / 多群友同时 @ 的场景，详见 README 第六节）：
+    每条消息都被派发成一个独立协程并发处理，因此显式做了这些约束 ——
+      · 玩家级串行锁：一个玩家的一轮交互（判题→计分→出下一题）不被另一条消息插队
+      · 一次性作答令牌：收到消息时在任何 await 之前消费，连点不会把答案算到下一题
+      · 群级发送锁（可重入）：图片连发作为整体发出，同群内不与他人消息交错
+      · alive 标记：玩家「结束」后，正在连发的图片协程立刻刹车
+      · 线程池：图片编码、扫目录、生成 12 题等同步耗时操作不占用事件循环
+      · 后台任务强引用 + 并发上限：任务不会被 GC，也不会被刷屏撑爆
+    不同群的锁是不同对象，所以多群之间完全并行、互不阻塞。
 """
 import asyncio
 import inspect
@@ -221,6 +231,44 @@ def parse_answer(text):
     return None
 
 
+# ===================== 并发原语 =====================
+class _ReentrantLock:
+    """
+    可重入的异步锁（asyncio.Lock 本身不可重入）。
+
+    为什么要可重入：发送一条题目的「图片连发」需要把 [标题 + A/B/C/D 四张图 + 提示]
+    作为整体发给同一个群，中间不能被别人的消息插进来（否则 A/B/C/D 的先后顺序就乱了，
+    玩家会看着错位的图作答）。所以外层先占住「群发送锁」，内层每发一条消息又要用同一把锁，
+    同一任务重入必须放行，否则自己把自己锁死。
+
+    实现：记录持锁任务 + 重入计数，只有计数归零才真正释放。
+    """
+
+    def __init__(self):
+        self._lock = asyncio.Lock()
+        self._owner = None
+        self._depth = 0
+
+    async def __aenter__(self):
+        task = asyncio.current_task()
+        if self._owner is task:
+            self._depth += 1
+            return self
+        await self._lock.acquire()
+        self._owner = task
+        self._depth = 1
+        return self
+
+    async def __aexit__(self, *exc):
+        if self._owner is not asyncio.current_task():
+            return
+        self._depth -= 1
+        if self._depth <= 0:
+            self._depth = 0
+            self._owner = None
+            self._lock.release()
+
+
 # ===================== 会话 =====================
 class UserSession:
     def __init__(self, key, chat_type, chat_id, user_id):
@@ -233,6 +281,17 @@ class UserSession:
         self.selected = []
         self.xd_mode = False
         self.last_active = time.time()
+
+        # alive=False 表示这一局已被「结束 / 重来 / 超时回收」作废。
+        # 正在连发图片的协程在每个 await 之后检查它，可以立刻刹车，
+        # 不会在「已结束」之后还继续往群里刷图。
+        self.alive = True
+
+        # awaiting=True 表示「当前题已完整发出、正等着收一次作答」。
+        # 它是一次性令牌：收到作答时在任何 await 之前就同步置 False，
+        # 这样连点/手抖发的第二条作答会被判定为过期而丢弃，
+        # 不会把答案算到下一题上（网页版当年就是靠同样的标记修掉这个 bug）。
+        self.awaiting = False
 
     def touch(self):
         self.last_active = time.time()
@@ -272,6 +331,43 @@ class QuizBot:
         self.self_id = None
         self._projects_cache = None
         self._projects_cache_time = 0
+
+        # ---- 并发控制 ----
+        # 每条消息都是一个独立 asyncio 任务并发跑（_receiver 里 create_task），
+        # 所以要显式保证：同一个玩家的一轮交互不被另一条消息插队，
+        # 同一个群的消息不互相交错，而不同群之间完全互不阻塞。
+        #
+        # 玩家级串行锁：key = "group:<群号>:<QQ号>" / "private:<QQ号>"
+        #   把「解析 -> 判题 -> 出下一题」整轮持锁，保证一局的状态迁移不撕裂。
+        self._key_locks = {}
+        # 群级发送锁：key = "group:<群号>" / "private:<QQ号>"
+        #   保证发往同一个群的「图片连发」是一个整体，不和别人的消息交错。
+        #   不同群用的是不同的锁对象，互相不等待。
+        self._chat_locks = {}
+        # 后台任务强引用集合。asyncio 只对任务持弱引用，不自己存一份的话，
+        # 任务可能在跑完前就被 GC 掉（表现为「消息偶尔毫无反应」）。
+        self._background_tasks = set()
+        # 同时在处理的消息数上限，防止被刷屏时任务无限膨胀
+        self._handler_sem = asyncio.Semaphore(int(cfg.get("max_concurrent_handlers", 64)))
+
+    # ---------- 并发原语 ----------
+    def _lock_for(self, table, key):
+        """按 key 取（或惰性创建）一把锁；同一 key 永远拿到同一个对象"""
+        lock = table.get(key)
+        if lock is None:
+            lock = _ReentrantLock()
+            table[key] = lock
+        return lock
+
+    def _chat_key(self, chat_type, chat_id):
+        return f"{chat_type}:{chat_id}"
+
+    def _chat_lock(self, chat_type, chat_id):
+        return self._lock_for(self._chat_locks, self._chat_key(chat_type, chat_id))
+
+    def _alive(self, session):
+        """会话是否仍然有效（被结束/重来/回收后就不要再往外发东西了）"""
+        return session is not None and session.alive
 
     # ---------- 素材 ----------
     def projects(self):
@@ -319,20 +415,23 @@ class QuizBot:
         segments = [s for s in segments if s]
         if not segments:
             return
-        if chat_type == "group":
-            await self._call("send_group_msg",
-                             {"group_id": int(chat_id), "message": segments})
-        else:
-            await self._call("send_private_msg",
-                             {"user_id": int(chat_id), "message": segments})
+        # 同一个群的发送串行化，保证消息顺序确定、互不穿插。
+        # 不同群是不同锁对象，因此多群之间完全并行。
+        async with self._chat_lock(chat_type, chat_id):
+            if chat_type == "group":
+                await self._call("send_group_msg",
+                                 {"group_id": int(chat_id), "message": segments})
+            else:
+                await self._call("send_private_msg",
+                                 {"user_id": int(chat_id), "message": segments})
 
     async def send_image(self, chat_type, chat_id, img_path, size=None, prefix=None):
         """发送一张图片（按配置编码）；prefix 会作为图片前的一条文本一起发出"""
-        seg = to_image_segment(
-            img_path,
-            size=size or self.cfg["image_size"],
-            mode=self.cfg["image_send_mode"],
-        )
+        size = size or self.cfg["image_size"]
+        mode = self.cfg["image_send_mode"]
+        # 缩放 + 编码是 CPU 活（Pillow），直接跑会占住整个事件循环，
+        # 让别人（哪怕在别的群）的消息也跟着卡住。丢到线程池里做。
+        seg = await asyncio.to_thread(to_image_segment, img_path, size, mode)
         if seg is None:
             await self.send(chat_type, chat_id,
                             (prefix or "") + "（图片加载失败，已跳过）")
@@ -367,10 +466,39 @@ class QuizBot:
         return None
 
     def _cleanup_sessions(self):
+        """回收超时无活动的对局，并顺手清理不再使用的锁，防止无界增长"""
         ttl = self.cfg["session_ttl"]
         now = time.time()
-        for key in [k for k, s in self.sessions.items() if now - s.last_active > ttl]:
-            self.sessions.pop(key, None)
+        for key in [k for k, s in self.sessions.items()
+                    if now - s.last_active > ttl]:
+            dead = self.sessions.pop(key, None)
+            if dead is not None:
+                dead.alive = False
+
+        active_chats = {self._chat_key(s.chat_type, s.chat_id)
+                        for s in self.sessions.values()}
+        active_keys = set(self.sessions)
+        for table, alive in ((self._chat_locks, active_chats),
+                             (self._key_locks, active_keys)):
+            for k in [k for k in table if k not in alive]:
+                table.pop(k, None)
+
+    # ---------- 消息分发 ----------
+    def spawn(self, event):
+        """
+        并发处理一条事件，并**持有任务的强引用**。
+        asyncio.create_task 只保留弱引用，若调用方不保存返回值，
+        任务可能在跑完前被垃圾回收，表现为「这条消息莫名其妙没反应」。
+        """
+        task = asyncio.ensure_future(self._handle_bounded(event))
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
+        return task
+
+    async def _handle_bounded(self, event):
+        # 限制同时在处理的消息数，避免被刷屏时任务无限膨胀
+        async with self._handler_sem:
+            await self.handle_event(event)
 
     async def on_message(self, event):
         mtype = event.get("message_type")
@@ -391,6 +519,10 @@ class QuizBot:
         if chat_id is None:
             return
 
+        key = self._session_key(event)
+        if key is None:
+            return
+
         # 是否视为「指令」
         has_prefix, body = strip_prefix(text, self.cfg["command_prefixes"])
         if mtype == "private":
@@ -400,48 +532,86 @@ class QuizBot:
         else:
             is_cmd = True
 
+        # ===== 关键：作答令牌必须在这里「同步」判定并消费 =====
+        # 下面任何一个 await 之后，世界都可能已经变了（上一题发完了、
+        # 会话被结束了……）。所以要趁现在、在还没让出控制权的时候就把
+        # 「这条消息算不算一次有效作答」定下来，否则连点两下会把第二次
+        # 作答算到下一题上，玩家会看到「没看过的题被判了」。
+        pre = self.sessions.get(key)
+        claimed = None       # (session, 选项下标)：本条消息合法占用了令牌
+        stale_answer = False  # 令牌不在手上却发了作答 -> 过期，直接丢弃
+        if pre is not None and pre.state == STATE_PLAYING:
+            idx = parse_answer(body)
+            if idx is not None:
+                if pre.awaiting and pre.alive:
+                    pre.awaiting = False
+                    claimed = (pre, idx)
+                else:
+                    stale_answer = True
+
+        if stale_answer:
+            # 上一题还在连发图片，或者已经答过了。
+            # 普通文字作答静默丢弃（多半是手抖/连点）；但如果他专门 @ 了机器人，
+            # 说明是认真作答，提醒一下比默默吞掉友好。
+            log.debug("丢弃过期作答：%s", body)
+            if is_cmd:
+                await self.send(chat_type, chat_id,
+                                "这题的作答已经收到过啦（或者图片还没发完）～"
+                                "等我发完当前题目再回复 A/B/C/D 哦")
+            return
+
         if not body:
             if is_cmd:
                 await self.send(chat_type, chat_id, "在的～回复「帮助」看看怎么玩吧！")
             return
 
         self._cleanup_sessions()
-        key = self._session_key(event)
-        session = self.sessions.get(key)
 
-        cmd, _ = match_command(body)
+        # 同一个玩家/会话的整轮交互串行执行，不让两条消息的回复交叉
+        async with self._lock_for(self._key_locks, key):
+            session = self.sessions.get(key)
 
-        # ---------- 1. 已有对局：会话内交互优先 ----------
-        if session is not None:
-            session.touch()
-            handled = await self.handle_in_session(session, body, cmd, is_cmd)
-            if handled:
+            if claimed is not None:
+                owner, idx = claimed
+                # 等锁期间会话可能已被结束/重开/替换：这一票作废
+                if (owner is session and session.state == STATE_PLAYING
+                        and session.alive):
+                    await self.do_answer(session, idx)
                 return
 
-        # ---------- 2. 无对局（或会话未处理）：全局指令 ----------
-        # 群里没 @ 机器人也没带前缀的普通聊天，一律不理会（避免误触发/刷屏）
-        if not is_cmd:
-            return
+            cmd, _ = match_command(body)
 
-        if cmd == "help":
-            await self.send(chat_type, chat_id, HELP_TEXT)
-            return
-        if cmd == "list":
-            await self.send(chat_type, chat_id, self.projects_text())
-            return
-        if cmd in ("start", "again"):
-            await self.start_selection(chat_type, chat_id, key, event.get("user_id"))
-            return
-        if cmd == "end":
-            return  # 没有对局，无需结束（静默，避免刷屏）
-        if cmd == "status":
-            await self.send(chat_type, chat_id, "你现在还没有进行中的对局，回复「猜声优」开一局吧～")
-            return
+            # ---------- 1. 已有对局：会话内交互优先 ----------
+            if session is not None:
+                session.touch()
+                if await self.handle_in_session(session, body, cmd, is_cmd):
+                    return
 
-        # ---------- 3. 兜底 ----------
-        await self.send(chat_type, chat_id,
-                        "没听懂这条指令呢 🤔\n回复「帮助」查看玩法，"
-                        "或回复「猜声优」直接开一局～")
+            # ---------- 2. 无对局（或会话未处理）：全局指令 ----------
+            # 群里没 @ 机器人也没带前缀的普通聊天，一律不理会（避免误触发/刷屏）
+            if not is_cmd:
+                return
+
+            if cmd == "help":
+                await self.send(chat_type, chat_id, HELP_TEXT)
+                return
+            if cmd == "list":
+                await self.send(chat_type, chat_id, self.projects_text())
+                return
+            if cmd in ("start", "again"):
+                await self.start_selection(chat_type, chat_id, key, event.get("user_id"))
+                return
+            if cmd == "end":
+                return  # 没有对局，无需结束（静默，避免刷屏）
+            if cmd == "status":
+                await self.send(chat_type, chat_id,
+                                "你现在还没有进行中的对局，回复「猜声优」开一局吧～")
+                return
+
+            # ---------- 3. 兜底 ----------
+            await self.send(chat_type, chat_id,
+                            "没听懂这条指令呢 🤔\n回复「帮助」查看玩法，"
+                            "或回复「猜声优」直接开一局～")
 
     # ---------- 会话内交互 ----------
     async def handle_in_session(self, session, body, cmd, is_cmd):
@@ -449,6 +619,9 @@ class QuizBot:
 
         # 公共指令
         if cmd == "end":
+            # 先置 alive=False，让「正在连发图片」的协程在下一个 await 后立刻刹车，
+            # 否则会出现「已结束」之后还继续往群里刷图
+            session.alive = False
             self.sessions.pop(session.key, None)
             await self.send(chat_type, chat_id, "👋 已结束当前对局，想玩了随时 @我 说「猜声优」～")
             return True
@@ -483,6 +656,12 @@ class QuizBot:
         if session.state == STATE_PLAYING:
             idx = parse_answer(body)
             if idx is not None:
+                # 走到这里说明令牌没被「收到消息那一刻」抢到：
+                # 要么上一题还在连发图片，要么这题已经答过了 —— 一律丢弃。
+                if not (session.awaiting and session.alive):
+                    log.debug("丢弃未到作答时机的输入：%s", body)
+                    return True
+                session.awaiting = False
                 await self.do_answer(session, idx)
                 return True
             if cmd == "start":
@@ -511,12 +690,16 @@ class QuizBot:
 
     # ---------- 各阶段动作 ----------
     async def start_selection(self, chat_type, chat_id, key, user_id):
-        if key is not None and key not in self.sessions:
-            if len(self.sessions) >= self.cfg["max_sessions"]:
-                await self.send(chat_type, chat_id, "😵 现在同时进行的对局太多啦，稍后再试试～")
-                return
         if key is None:
             return
+        old = self.sessions.get(key)
+        if old is None and len(self.sessions) >= self.cfg["max_sessions"]:
+            await self.send(chat_type, chat_id, "😵 现在同时进行的对局太多啦，稍后再试试～")
+            return
+        if old is not None:
+            # 重开时作废旧会话：它的连发图片协程会在下一个 await 后收手。
+            # 注意锁是按「玩家 key」取的而不是按会话对象，所以换对象不影响串行化。
+            old.alive = False
         session = UserSession(key, chat_type, chat_id, user_id)
         self.sessions[key] = session
         await self.send(chat_type, chat_id, self.projects_text())
@@ -549,18 +732,24 @@ class QuizBot:
                 return
 
         rng = random.Random(secrets.randbits(256))
-        seiyu_list = load_seiyu(self.assets_dir, selected, rng=rng)
+        # 扫目录 + 逐张 open/verify 图片是明显的同步 IO，题目的生成同样要校验大量图片。
+        # 直接在这里跑会占住整个事件循环，把别的群的消息一起卡住 —— 丢到线程池。
+        seiyu_list = await asyncio.to_thread(load_seiyu, self.assets_dir, selected, rng)
         if len(seiyu_list) < 4:
             await self.send(chat_type, chat_id,
                             "⚠️ 所选企划的声优不足 4 位，没法出题，请多选几个企划～")
             return
 
         quiz = QuizSession(seiyu_list, xd_mode=xd, rng=rng)
-        quiz.start()
+        await asyncio.to_thread(quiz.start)
+        if not self._alive(session):
+            return  # 出题期间玩家已经「结束」了，这一局作废
         session.quiz = quiz
         session.selected = selected
         session.xd_mode = xd
         session.state = STATE_PLAYING
+        session.awaiting = False
+        session.touch()
 
         head = "🎬 开局！企划：{}\n共 {} 题，每题 {} 分{}".format(
             "、".join(selected), TOTAL_QUESTIONS, PER_SCORE,
@@ -573,6 +762,11 @@ class QuizBot:
     async def send_question(self, session):
         chat_type, chat_id = session.chat_type, session.chat_id
         quiz = session.quiz
+        # 题目还在往外发，此刻不接受任何作答
+        session.awaiting = False
+
+        if not self._alive(session):
+            return
         q = quiz.current_question
         if q is None:
             await self.send_result(session)
@@ -580,17 +774,20 @@ class QuizBot:
 
         n, total = quiz.number, quiz.total_questions
 
-        # 题型 2：看图猜人（1 张图 + 4 个名字）
+        # 题型 2：看图猜人（1 张图 + 4 个名字）—— 本来就是一条消息，天然原子
         if q["type"] == 2:
             options_lines = "\n".join(
                 "{}、{}".format(o["key"], o["name"]) for o in quiz.current_options()
             )
+            size = self.cfg["image_size"]
+            # 图片编码是 CPU 活，放线程里做，别堵住事件循环
+            seg = await asyncio.to_thread(to_image_segment, q["image"], size,
+                                          self.cfg["image_send_mode"])
+            if not self._alive(session):
+                return
             segments = [text_seg(
                 "【第 {}/{} 题 · 看图猜人】\n这张图片对应的声优是？".format(n, total)
             )]
-            size = self.cfg["image_size"]
-            seg = to_image_segment(q["image"], size=size,
-                                   mode=self.cfg["image_send_mode"])
             if seg:
                 segments.append(seg)
             else:
@@ -599,20 +796,38 @@ class QuizBot:
                 "\n{}\n\n回复 A/B/C/D 或 1/2/3/4 作答".format(options_lines)
             ))
             await self.send(chat_type, chat_id, segments)
+            session.awaiting = self._alive(session)
             return
 
         # 题型 1：看名选图（1 个名字 + 4 张图）
-        await self.send(chat_type, chat_id,
-                        "【第 {}/{} 题 · 看名选图】\n请从下面 4 张图片中选出「{}」\n"
-                        "（依次对应 A、B、C、D）".format(n, total, q["correct"]["name"]))
-        for opt in quiz.current_options():
-            await asyncio.sleep(self.cfg["send_interval"])
-            await self.send_image(chat_type, chat_id, opt["folder"],
-                                  prefix="{}：".format(opt["key"]))
-        await self.send(chat_type, chat_id, "回复 A/B/C/D 或 1/2/3/4 作答")
+        # 「标题 + A/B/C/D 四张图 + 作答提示」必须作为一个整体发出去：
+        # 中途若插进别人的消息，玩家看到的图片顺序就和判题顺序对不上了。
+        # 这里占住本群的发送锁（可重入，内层 send 仍能通过），
+        # 不同群用的是不同的锁，所以别的群不受影响。
+        async with self._chat_lock(chat_type, chat_id):
+            if not self._alive(session):
+                return
+            await self.send(chat_type, chat_id,
+                            "【第 {}/{} 题 · 看名选图】\n请从下面 4 张图片中选出「{}」\n"
+                            "（依次对应 A、B、C、D）".format(n, total, q["correct"]["name"]))
+            for opt in quiz.current_options():
+                await asyncio.sleep(self.cfg["send_interval"])
+                if not self._alive(session):
+                    return  # 玩家已「结束」/「重来」，别再刷图了
+                await self.send_image(chat_type, chat_id, opt["folder"],
+                                      prefix="{}：".format(opt["key"]))
+            if not self._alive(session):
+                return
+            await self.send(chat_type, chat_id, "回复 A/B/C/D 或 1/2/3/4 作答")
+
+        # 题目完整送达，这时才开放作答
+        session.awaiting = self._alive(session)
 
     async def do_answer(self, session, idx):
         chat_type, chat_id = session.chat_type, session.chat_id
+        session.awaiting = False
+        if not self._alive(session):
+            return
         quiz = session.quiz
         res = quiz.answer(idx)
         if res is None:
@@ -626,17 +841,20 @@ class QuizBot:
                 opt=res["correct_option"], name=res["correct_name"])
 
         tail = "　（当前得分 {}）".format(res["score"])
+        await self.send(chat_type, chat_id, reply + tail)
+        await asyncio.sleep(self.cfg["send_interval"])
+        if not self._alive(session):
+            return
         if res["finished"]:
-            await self.send(chat_type, chat_id, reply + tail)
-            await asyncio.sleep(self.cfg["send_interval"])
             await self.send_result(session)
         else:
-            await self.send(chat_type, chat_id, reply + tail)
-            await asyncio.sleep(self.cfg["send_interval"])
             await self.send_question(session)
 
     async def send_result(self, session):
         chat_type, chat_id = session.chat_type, session.chat_id
+        session.awaiting = False
+        if not self._alive(session):
+            return
         quiz = session.quiz
         r = quiz.result()
         session.state = STATE_DONE
@@ -695,7 +913,19 @@ class QuizBot:
                 continue
 
             if data.get("post_type"):
-                asyncio.create_task(self.handle_event(data))
+                # 用 spawn 而不是裸 create_task：必须自己持有任务的强引用
+                self.spawn(data)
+
+    def _fail_pending(self):
+        """
+        连接断开时，把还在等回执的请求立刻置为「无结果」。
+        否则这些 future 要一直挂到 20 秒超时才醒过来，
+        期间对应的玩家/群会被自己的发送锁白等一大截。
+        """
+        pending, self._pending = self._pending, {}
+        for fut in pending.values():
+            if not fut.done():
+                fut.set_result(None)
 
     async def run_forever(self):
         _install_quiet_exception_handler(asyncio.get_running_loop())
@@ -718,11 +948,12 @@ class QuizBot:
                     await self._receiver(ws)
             except asyncio.CancelledError:
                 self.ws = None
+                self._fail_pending()
                 raise
             except Exception as e:
                 log.warning("连接断开：%s，%s 秒后重连", e, backoff)
             self.ws = None
-            self._pending.clear()
+            self._fail_pending()
             await asyncio.sleep(backoff)
             backoff = min(backoff * 2, 30)
 

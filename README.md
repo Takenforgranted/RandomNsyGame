@@ -173,6 +173,7 @@ qqbot/
   ├─ config.py              # 配置加载
   ├─ config.example.json    # 配置示例（复制成 config.json 使用）
   ├─ test_game.py           # 离线自测：不连 QQ 跑完 12 题流程（71 项断言）
+  ├─ test_concurrency.py    # 并发自测：多群多玩家同时 @（29 项断言）
   ├─ mock_onebot_server.py  # 假 OneBot 服务器：不装 QQ 也能调试
   ├─ start_bot.bat / .sh    # 一键启动
   └─ README.md              # QQ 机器人部署文档（详细版）
@@ -200,10 +201,16 @@ python bot.py                              # 连上后会打印「✅ 已连接�
 
 Windows 用户也可直接双击 `qqbot\start_bot.bat` 一键启动。
 
-> **完整部署文档（NapCat 配置、指令表、配置项、常见问题、代理陷阱）见 [`qqbot/README.md`](qqbot/README.md)**
+> **完整部署文档（NapCat 配置、指令表、配置项、并发设计、常见问题、代理陷阱）
+> 见 [`qqbot/README.md`](qqbot/README.md)**
 > 想先不装 QQ 试试？`python qqbot/mock_onebot_server.py` 起一个假服务器，
 > 再 `python qqbot/bot.py`，就能在终端里当群友和机器人聊天。
-> 想快速验证代码没改坏？`python qqbot/test_game.py`。
+> 想快速验证代码没改坏？`python qqbot/test_game.py`（玩法，71 项）与
+> `python qqbot/test_concurrency.py`（并发，29 项）。
+
+> 🔀 **多群多玩家并发**：每条消息都是独立协程并发处理。已针对性处理「连点两下作答导致题目错位」
+> 「同群两组 A/B/C/D 图片交错」「结束后仍继续刷图」「图片编码阻塞事件循环」等问题，
+> 并保证**不同群之间完全互不阻塞**、同一个人可同时在多个群/私聊各开一局。详见 `qqbot/README.md` 第六节。
 
 > ⚠️ 建议用 QQ 小号当机器人；`config.json` 含 Token，已被 `.gitignore` 排除，请勿提交。
 

@@ -42,6 +42,8 @@ DEFAULTS = {
     "session_ttl": 3600,
     # 同时进行的对局上限，防止刷屏
     "max_sessions": 100,
+    # 同时处理的消息条数上限（超出则排队），防止被刷屏时任务无限膨胀
+    "max_concurrent_handlers": 64,
 
     # ---- 调试 ----
     "log_level": "INFO",

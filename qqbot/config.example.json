@@ -17,6 +17,7 @@
 
   "session_ttl": 3600,
   "max_sessions": 100,
+  "max_concurrent_handlers": 64,
 
   "log_level": "INFO"
 }
