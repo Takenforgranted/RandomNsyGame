@@ -208,3 +208,7 @@ __marimo__/
 
 assets/
 .DS_Store
+
+# QQ 机器人（QQBot 分支）
+qqbot/config.json
+qqbot/mock_dump/

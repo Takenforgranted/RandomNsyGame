@@ -11,6 +11,8 @@
 
 ## 核心内容
 - 主程序：**趣味猜女声优器**，完整游戏交互界面
+- 网页版：Flask + 原生前端的**多人在线版**，支持多人同时开玩
+- QQ 机器人版：把游戏搬进 QQ 群，**@机器人说「猜声优」就能玩**
 - 辅助脚本1：声优图鉴导出工具，一键生成带图片的Excel统计表
 - 辅助脚本2：文件夹批量重命名工具，统一管理声优资源编号
 - 资源结构：按「企划文件夹 → 编号-声优名文件夹 → 图片」组织
@@ -146,6 +148,64 @@ Windows 用户也可直接双击 `启动网页版.bat` 一键启动。
 Linux/macOS用户可以使用`bash start.sh`一键启动（激活虚拟环境+启动服务器）
 
 > 提示：桌面版（`python main.py`）与网页版互不影响，可同时保留、按需运行。
+
+
+---
+
+## QQ 机器人版
+
+在保留全部玩法与规则的前提下，额外提供一套 **QQ 群机器人版**：
+把游戏搬进 QQ 群，**@机器人说「猜声优」→ 选企划 → 看图/看名字作答 → 12 题结算**，
+答对答错都有不同回应，支持群聊与私聊、多人各自开一局互不干扰。
+
+### 玩法与桌面版完全一致
+- 多企划多选、XD 模式（正确率低于 50% 得分归零）
+- 共 12 题、每题 10 分、满分 120 分
+- 两种题型交替：看名字选图（连发 4 张图）/ 看图选名字（1 张图 + 4 个名字）
+- 每轮正确答案声优绝不重复、实时计时、自动校验损坏图片
+
+### QQ 机器人版文件结构
+```text
+qqbot/
+  ├─ bot.py                 # 机器人主程序（OneBot v11 协议，连 QQ 端实现）
+  ├─ game.py                # 纯游戏逻辑（出题/判题/结算，无网络无 UI）
+  ├─ image_utils.py         # 图片缩放白底填充 + 转 QQ 图片消息段
+  ├─ config.py              # 配置加载
+  ├─ config.example.json    # 配置示例（复制成 config.json 使用）
+  ├─ test_game.py           # 离线自测：不连 QQ 跑完 12 题流程（71 项断言）
+  ├─ mock_onebot_server.py  # 假 OneBot 服务器：不装 QQ 也能调试
+  ├─ start_bot.bat / .sh    # 一键启动
+  └─ README.md              # QQ 机器人部署文档（详细版）
+```
+
+### 在群里怎么玩
+```text
+@机器人 猜声优            → 展示企划清单
+1 3                       → 选企划（多选空格隔开；加 xd 开挑战模式）
+A / 1                     → 作答（对局中不用 @ 机器人）
+@机器人 帮助 / 企划 / 状态 / 结束 / 再来
+```
+
+### 部署（原理与步骤）
+`bot.py` 只说 [OneBot v11](https://github.com/botuniverse/onebot-11) 通用协议，
+真正登录 QQ 的是 QQ 端实现（推荐 [NapCat](https://github.com/NapNeko/NapCatQQ)，也兼容 LLOneBot / Lagrange）。
+所以部署 = **装 QQ 端实现 + 开一个 WebSocket 端口 + 改 `config.json` + 跑 `bot.py`**。
+
+```bash
+pip install -r qqbot/requirements.txt      # websockets + pillow
+cd qqbot
+cp config.example.json config.json         # 填 onebot_ws_url 与 access_token
+python bot.py                              # 连上后会打印「✅ 已连接」
+```
+
+Windows 用户也可直接双击 `qqbot\start_bot.bat` 一键启动。
+
+> **完整部署文档（NapCat 配置、指令表、配置项、常见问题、代理陷阱）见 [`qqbot/README.md`](qqbot/README.md)**
+> 想先不装 QQ 试试？`python qqbot/mock_onebot_server.py` 起一个假服务器，
+> 再 `python qqbot/bot.py`，就能在终端里当群友和机器人聊天。
+> 想快速验证代码没改坏？`python qqbot/test_game.py`。
+
+> ⚠️ 建议用 QQ 小号当机器人；`config.json` 含 Token，已被 `.gitignore` 排除，请勿提交。
 
 
 ---

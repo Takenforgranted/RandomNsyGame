@@ -1,0 +1,22 @@
+{
+  "onebot_ws_url": "ws://127.0.0.1:3001",
+  "access_token": "",
+  "use_system_proxy": false,
+
+  "assets_dir": "../assets",
+
+  "image_send_mode": "base64",
+  "image_size": 400,
+  "send_interval": 0.4,
+
+  "require_at_in_group": true,
+  "allow_plain_answer": true,
+  "enable_private_chat": true,
+  "enable_group_chat": true,
+  "command_prefixes": ["#", "/", "！", "!", "。"],
+
+  "session_ttl": 3600,
+  "max_sessions": 100,
+
+  "log_level": "INFO"
+}
